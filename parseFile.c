@@ -1,8 +1,30 @@
 /*****************************************************************************
+ * General Overview
+ *
+ * A large portion of my current job responsibilities requires the use of C
+ * programming for parsing through client-provided files, formatting data,
+ * and creating reports for clients.  We have even used C to output web pages,
+ * although this was quite annoying compared to using Ruby, PHP, etc.
+ *
+ * This particular example is from a pre-parse application I wrote for an
+ * appointment notification client (meaning we contact people in a list to
+ * remind them of an upcoming appointment).  The function below is only a
+ * small excerpt of the application, but a largely important one.
+ *
+ ****************************************************************************/
+
+
+/*****************************************************************************
  * NAME:        parse_file
  *
- * DESCRIPTION: This function will read the input file and update the ivb
- *              users.
+ * DESCRIPTION: This function parses through an input file line-by-line and
+ *              reformats the data into a new file based on the values
+ *              we need for our application.  It also allows us to sort through
+ *              records that may be violating a particular set of rules and
+ *              identify duplicate records.  Of course, much of that
+ *              functionality has been stripped out of this example due to
+ *              privacy and security reasons, but this should give a general
+ *              idea of my C programming experience.
  *
  * PARAMETERS:  None
  *
@@ -16,12 +38,9 @@ int parse_file (void)
         clinic_phone1[11],
         clinic_phone2[11],
         patientPhone[11],
-        doctor_num[7],
         clinic_loc[21],
         account_id[ID_LEN],
         mrn[13],
-        report_group[4],
-        ttsFlag[4],
         emailName[26],
         emailDomain[26],
         email[52];
@@ -31,12 +50,16 @@ int parse_file (void)
 
    GL_ENTER (__func__);
 
+   // Here, I'm opening the client's input file for reading.  For future reference,
+   // Cr is a struct for defining a control record.  As seen here, it holds the
+   // filename that was passed as an argument to the app.
    in = fopen (Cr.fname, "r");
    if (in == NULL) {
       genlog( LVL1,  GL_NAME, "ERROR: Unable to open job file [%s]", Cr.fname );
       GL_LEAVE( -1 );
    }
 
+   // I set up 2 separate output files, one for phone reminders and one for email reminders
    memset (Cr.phoneOutfile, '\0', sizeof(Cr.phoneOutfile));
    strcpy (Cr.phoneOutfile, Cr.fname);
    strtok (Cr.phoneOutfile, ".");
@@ -65,30 +88,10 @@ int parse_file (void)
    if ( (Cr.patients.list = (PATIENT *)calloc(1,
                                   sizeof(PATIENT))) == NULL ){
       genlog (LVL1, GL_NAME, "Memory allocation failed. Exiting.");
-      // Could just call exit, but oh well
-      freeList();
-      GL_LEAVE( -1 );
-   }
-   Cr.docCount = 0;
-   Cr.clinicCount = 0;
-
-   if ( load_bcl(DOCNUMBCL) != SUCCESS ) {
-      genlog (LVL1, GL_NAME, "Failed loading Doctor BCL. Exiting.");
-      freeList();
       GL_LEAVE( -1 );
    }
 
-   if ( load_bcl(CLINICBCL) != SUCCESS ) {
-      genlog (LVL1, GL_NAME, "Failed loading Clinic BCL. Exiting.");
-      freeList();
-      GL_LEAVE( -1 );
-   }
-
-   if ( Cr.clinicCount > 1 ) {
-      qsort( Cr.clinicPrompts, Cr.clinicCount, sizeof( PROMPT_BCL ),
-                   (int (*)()) cmpPrompts );
-   }
-
+   // Now I process the file line by line.
    while (feof (in) == 0) {
       Cr.tot_read++;
 
@@ -105,10 +108,7 @@ int parse_file (void)
       memset (patientPhone, '\0', sizeof(patientPhone));
       memset (account_id, '\0', sizeof(account_id));
       memset (mrn, '\0', sizeof(mrn));
-      memset (report_group, '\0', sizeof(report_group));
-      memset (doctor_num, '\0', sizeof(doctor_num));
       memset (clinic_loc, '\0', sizeof(clinic_loc));
-      memset (ttsFlag, '\0', sizeof(ttsFlag));
       memset (emailName, '\0', sizeof(emailName));
       memset (emailDomain, '\0', sizeof(emailDomain));
       memset (email, '\0', sizeof(email));
@@ -129,15 +129,13 @@ int parse_file (void)
       
       sprintf (patientPhone, "%10.10s", line+414);
 
-      // Grab the doctor and clinic codes, then double check that we have 
-      // matching prompts in the BCL
-      sprintf (doctor_num, "%6.6s", line+216);
-      genlog (LVL1, GL_NAME, "doctor_num = %s", doctor_num);
       sprintf (clinic_loc, "%20.20s", line+284);
       trim(clinic_loc);
       genlog (LVL1, GL_NAME, "clinic_loc = %s", clinic_loc);
       
-      if ( validAppointment( line, report_group, clinic_phone2 ) ) {
+      // At this point, I check the record against a specific set of rules
+      // to verify that it is valid.
+      if ( validAppointment( line, clinic_phone2 ) ) {
          // MRN + YYMMDD
          sprintf (account_id, "%s%2.2s%2.2s%2.2s", mrn, line+184,
             line+178, line+181);
@@ -151,30 +149,7 @@ int parse_file (void)
          genlog (LVL1, GL_NAME, "Invalid: account_id = %s", account_id);
       }
 
-	  memset (Cr.clinicPrompt, '\0', sizeof(Cr.clinicPrompt));
-      genlog (LVL1, GL_NAME, "Moving to check_bcl");
-      if (check_bcl(DOCNUMBCL, doctor_num, line) == SUCCESS) {
-    	  if (check_bcl(CLINICBCL, clinic_loc, line) == SUCCESS) {
-    		  sprintf (ttsFlag, "N/N");
-    		  sprintf (line, "%s%s", line, Cr.clinicPrompt); // Clinic was found in BCL, add new prompt to line
-    	  } else {
-    		  sprintf (ttsFlag, "N/Y");
-    		  sprintf (line, "%s     ", line); // Clinic was not found in BCL, add spaces to line to account for field
-    	  }
-      } else {
-    	  if (check_bcl(CLINICBCL, clinic_loc, line) == SUCCESS) {
-    		  sprintf (ttsFlag, "Y/N");
-    		  sprintf (line, "%s%s", line, Cr.clinicPrompt);
-    	  } else {
-    		  sprintf (ttsFlag, "Y/Y");
-    		  sprintf (line, "%s     ", line);
-    	  }
-      }
-	  genlog (LVL1, GL_NAME, "Setting ttsFlag to %s", ttsFlag);
-      sprintf (line, "%s%s", line, ttsFlag);
-      genlog (LVL1, GL_NAME, "New line with flag is [%s]", line);
-      
-      // Get the email name and domain, combine them into one, then add to the
+      // Get the email name and domain, combine them into one fully qualified address
       genlog (LVL1, GL_NAME, "Getting email");
       sprintf(emailName, "%.25s", line+447);
       sprintf(emailDomain, "%.25s", line+472);
